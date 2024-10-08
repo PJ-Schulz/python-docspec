@@ -81,7 +81,8 @@ def load_python_modules(
                 raise
     for package_name in packages or []:
         try:
-            files.extend(iter_package_files(package_name, search_path))
+            _kw = dict(prefered_python_file_type=options.prefered_python_file_type) if options is not None else dict()
+            files.extend(iter_package_files(package_name, search_path, **_kw))
         except ImportError:
             if raise_:
                 raise
@@ -168,15 +169,62 @@ def find_module(module_name: str, search_path: t.Optional[t.Sequence[t.Union[str
     raise ImportError(module_name)
 
 
+def filter_python_file_types(lst: t.List[Path], prefer_python_file_type: str = "py") -> t.List[Path]:
+    """
+    Remove files from the list based on the preferred Python file type.
+
+    If 'prefer_python_file_type' is 'py', it will remove corresponding '.pyi' files
+    when both a '.py' and a '.pyi' file with the same name exist in the list.
+
+    If 'prefer_python_file_type' is 'pyi', it will remove corresponding '.py' files
+    under the same conditions.
+
+    Parameters:
+    - lst: List[Path]: A list of Path objects representing files.
+    - prefer_python_file_type: str: The preferred file type ('py' or 'pyi').
+
+    Returns:
+    - List[Path]: A filtered list of Path objects based on the preference.
+
+    Raises:
+    - ValueError: If prefer_python_file_type is not 'py' or 'pyi'.
+    """
+    # Validate the input for prefer_python_file_type
+    if prefer_python_file_type not in {"py", "pyi"}:
+        raise ValueError("prefer_python_file_type must be either 'py' or 'pyi'")
+
+    # Create a dictionary to track file names without extensions
+    base_names = {}
+    for file in lst:
+        base_name = str(file.with_suffix(""))
+        suffix = file.suffix
+        if base_name not in base_names:
+            base_names[base_name] = set()
+        base_names[base_name].add(suffix)
+
+    # Identify conflicting files that have both .py and .pyi
+    conflicting_files = {base for base, exts in base_names.items() if ".py" in exts and ".pyi" in exts}
+
+    # Determine which suffix to remove
+    opposite_suffix = ".pyi" if prefer_python_file_type == "py" else ".py"
+
+    # Filter the list to exclude opposite files when there's a conflict
+    cleaned_list = [
+        file for file in lst if not (file.suffix == opposite_suffix and str(file.with_suffix("")) in conflicting_files)
+    ]
+
+    return cleaned_list
+
+
 def iter_package_files(
     package_name: str,
     search_path: t.Optional[t.Sequence[t.Union[str, Path]]] = None,
+    prefered_python_file_type: str = "py",
 ) -> t.Iterable[t.Tuple[str, str]]:
     """Returns an iterator for the Python source files in the specified package. The items returned
     by the iterator are tuples of the module name and filename. Supports a PEP 420 namespace package
     if at least one matching directory with at least one Python source file in it is found.
     """
-
     encountered: t.Set[str] = set()
 
     try:
@@ -191,8 +239,10 @@ def iter_package_files(
         parent_dir = Path(path, *package_name.split("."))
         if not parent_dir.is_dir():
             continue
-        for item in recurse_directory(parent_dir):
-            if item.suffix == ".py":
+        lst = list(recurse_directory(parent_dir))
+        filtered_lst = filter_python_file_types(lst, prefer_python_file_type=prefered_python_file_type)
+        for item in filtered_lst:
+            if item.suffix in (".py", ".pyi"):
                 parts = item.with_suffix("").relative_to(parent_dir).parts
                 if parts[-1] == "__init__":
                     parts = parts[:-1]

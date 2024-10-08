@@ -235,6 +235,7 @@ class ParserOptions:
     #   the table when using the Black parser.
     print_function: bool = True
     treat_singleline_comment_blocks_as_docstrings: bool = False
+    prefered_python_file_type: str = "py"
 
 
 class Parser:
